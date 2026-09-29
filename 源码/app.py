@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import queue
 import sys
@@ -12,11 +11,16 @@ from tkinter import filedialog, messagebox, ttk
 
 from epub_converter import Converter, collect_books
 
-TITLE = 'EPUB 简转繁工具'
+TITLE = 'EPUB 简繁转换工具'
+CONVERSION_MODES = {
+    's2tw': '简体 → 台湾繁体（默认）',
+    's2t': '简体 → 标准繁体',
+    't2s': '繁体 → 简体',
+}
 
 
 class App:
-    def __init__(self, root, initial_paths=()):
+    def __init__(self, root, initial_paths=(), initial_config='s2tw'):
         self.root = root
         root.title(TITLE)
         root.geometry('850x660')
@@ -27,7 +31,7 @@ class App:
         self.events = queue.Queue()
         self.stop = threading.Event()
         self.recursive = tk.BooleanVar(value=False)
-        self.mode = tk.StringVar(value='台湾繁体（推荐）')
+        self.mode = tk.StringVar(value=CONVERSION_MODES[initial_config])
         self.status = tk.StringVar(value='请选择 EPUB 文件或所在文件夹')
         panel = ttk.Frame(root, padding=20)
         panel.pack(fill='both', expand=True)
@@ -55,8 +59,8 @@ class App:
         listing.rowconfigure(0, weight=1)
         settings = ttk.Frame(panel)
         settings.pack(fill='x')
-        ttk.Label(settings, text='转换字形：').pack(side='left')
-        self.mode_box = ttk.Combobox(settings, textvariable=self.mode, values=['台湾繁体（推荐）', '标准繁体'], state='readonly', width=22)
+        ttk.Label(settings, text='转换模式：').pack(side='left')
+        self.mode_box = ttk.Combobox(settings, textvariable=self.mode, values=list(CONVERSION_MODES.values()), state='readonly', width=28)
         self.mode_box.pack(side='left')
         ttk.Label(panel, text='保存方式：直接覆盖原文件，不创建备份。校验失败的文件保持原样。', foreground='#925200').pack(anchor='w', pady=(10, 4))
         ttk.Label(panel, text='也可将 EPUB 或文件夹拖到程序图标上；图片中的文字不会转换。', foreground='#555555').pack(anchor='w')
@@ -123,12 +127,12 @@ class App:
         if not self.paths:
             messagebox.showinfo(TITLE, '请先添加 EPUB 文件。', parent=self.root)
             return
+        config = next(key for key, label in CONVERSION_MODES.items() if label == self.mode.get())
         self.set_busy(True)
         self.stop.clear()
         paths = list(self.paths)
-        config = 's2tw' if self.mode.get().startswith('台湾') else 's2t'
         self.progress.configure(value=0, maximum=len(paths))
-        self.append(f'开始转换 {len(paths)} 本书；直接覆盖，不备份。')
+        self.append(f'开始转换 {len(paths)} 本书；{self.mode.get()}；直接覆盖，不备份。')
         threading.Thread(target=self.work, args=(paths, config), daemon=True).start()
 
     def work(self, paths, config):
@@ -199,7 +203,8 @@ def main():
     parser.add_argument('paths', nargs='*')
     parser.add_argument('--convert', action='store_true', help='直接转换指定路径，不打开界面')
     parser.add_argument('--recursive', action='store_true')
-    parser.add_argument('--config', choices=['s2tw', 's2t'], default='s2tw')
+    parser.add_argument('--config', choices=list(CONVERSION_MODES), default='s2tw',
+                        help='转换模式：s2tw 台湾繁体（默认），s2t 标准繁体，t2s 繁体转简体')
     parser.add_argument('--report', help='将运行结果写入 JSON 文件')
     parser.add_argument('--self-test', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -223,12 +228,14 @@ def main():
             print(json.dumps(report, ensure_ascii=False, indent=2))
         return 1 if errors else 0
     root = tk.Tk()
-    app = App(root, args.paths)
+    app = App(root, args.paths, args.config)
     if args.self_test:
         root.withdraw()
         def check():
-            converted = Converter().opencc.convert('简体中文转换测试，头发发展。')
-            save_report(args.report, {'gui': 'ok', 'opencc': converted, 'title': root.title()})
+            sample = '繁體中文轉換測試，頭髮發展。' if args.config == 't2s' else '简体中文转换测试，头发发展。'
+            converted = Converter(args.config).opencc.convert(sample)
+            save_report(args.report, {'gui': 'ok', 'opencc': converted, 'title': root.title(),
+                                      'mode': app.mode.get(), 'modes': list(app.mode_box['values'])})
             root.destroy()
         root.after(400, check)
     root.mainloop()

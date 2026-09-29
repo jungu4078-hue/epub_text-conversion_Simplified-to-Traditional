@@ -1,4 +1,4 @@
-"""Offline EPUB Simplified -> Traditional Chinese converter."""
+"""Offline EPUB Simplified / Traditional Chinese converter."""
 from __future__ import annotations
 
 import copy
@@ -16,6 +16,15 @@ TEXT_ATTRIBUTES = {'title', 'alt', 'aria-label', 'aria-description', 'label', 'p
 MACHINE_ELEMENTS = {'script', 'style', 'identifier', 'date'}
 META_TEXT_NAMES = {'description', 'keywords', 'author', 'title'}
 SIMPLIFIED_LANGUAGES = {'zh', 'zh-cn', 'zh-hans', 'zh-hans-cn'}
+TRADITIONAL_LANGUAGES = {
+    'zh', 'zh-tw', 'zh-hk', 'zh-mo', 'zh-hant',
+    'zh-hant-tw', 'zh-hant-hk', 'zh-hant-mo',
+}
+CONVERSION_LANGUAGES = {
+    's2tw': ('zh-TW', SIMPLIFIED_LANGUAGES),
+    's2t': ('zh-Hant', SIMPLIFIED_LANGUAGES),
+    't2s': ('zh-Hans', TRADITIONAL_LANGUAGES),
+}
 
 
 def parse(data):
@@ -47,16 +56,16 @@ def structure(data):
 
 class Converter:
     def __init__(self, config='s2tw'):
-        if config not in {'s2t', 's2tw'}:
+        if config not in CONVERSION_LANGUAGES:
             raise ValueError('不支持的转换模式')
         self.opencc = OpenCC(config)
-        self.language = 'zh-TW' if config == 's2tw' else 'zh-Hant'
+        self.language, self.source_languages = CONVERSION_LANGUAGES[config]
 
     def convert_xml(self, data):
         tree = parse(data)
         changes = 0
 
-        def traditional(value):
+        def convert_text(value):
             nonlocal changes
             result = self.opencc.convert(value)
             changes += result != value
@@ -69,21 +78,21 @@ class Converter:
             name = local_name(node.tag)
             blocked = blocked or name in MACHINE_ELEMENTS
             if not blocked:
-                if name == 'language' and node.text and node.text.strip().lower() in SIMPLIFIED_LANGUAGES:
+                if name == 'language' and node.text and node.text.strip().lower() in self.source_languages:
                     node.text = self.language
                     changes += 1
                 elif node.text:
-                    node.text = traditional(node.text)
+                    node.text = convert_text(node.text)
                 for key, value in list(node.attrib.items()):
                     if text_attribute(node, key):
-                        node.set(key, traditional(value))
-                    elif local_name(key) == 'lang' and value.lower() in SIMPLIFIED_LANGUAGES:
+                        node.set(key, convert_text(value))
+                    elif local_name(key) == 'lang' and value.strip().lower() in self.source_languages:
                         node.set(key, self.language)
                         changes += 1
             for child in node:
                 walk(child, blocked)
                 if not blocked and child.tail:
-                    child.tail = traditional(child.tail)
+                    child.tail = convert_text(child.tail)
 
         walk(tree.getroot())
         if changes == 0:
